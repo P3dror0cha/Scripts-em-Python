@@ -1,0 +1,20 @@
+import pandas as pd
+from google.colab import files
+
+# Upload the CSV file
+upload = files.upload()
+
+# Get the first uploaded filename
+filename = next(iter(upload))  
+
+# Read the CSV file with specified encoding
+df = pd.read_csv(filename, encoding='latin-1', skiprows=1, sep='\t') 
+
+df_filtrado = df.loc[(df['investigation_type'] == 'metagenome') & (df['country'] == 'Brazil') & (df['biome'].str.contains('marine|aquatic|sea|reef|water|river', case=False, na=False)) & (df['assembled'] == 'no') & (df['investigation_type'] == 'metagenome') & (df['sequence_type'].str.contains('WGS|shotgun', case=False, na=False))]
+
+
+# Parâmetros Principais: df_filtrado = df.loc[(df['investigation_type'] == 'metagenome') & (df['country'] == 'Brazil') & (df['biome'].str.contains('marine|aquatic|sea|reef|water|river', case=False, na=False))]
+# Parâmetros Secundários: df_filtrado_final = df.loc[(df_filtrado['assembled'] == 'no') & (df_filtrado['investigation_type'] == 'metagenome') & (df_filtrado['sequence_type'].str.contains('WGS|shotgun', case=False, na=False))] 
+# Parâmetro assembled == no restringe vários resultados.
+# O tipo de sequência (sequence_type) é um parâmetro importante? Há várias respostas como WGS, amplicon metagenome, shotgun metagenome.
+print(df_filtrado)
