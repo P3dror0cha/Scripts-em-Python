@@ -1,25 +1,21 @@
 import pandas as pd
 # download da tabela
-tabela_teste = 'https://web.app.ufz.de/marmdb/session/d104f37cee4d0a4e01273dda26ccc6b8/download/download_full_complete?w='
+tabela_teste = 'https://web.app.ufz.de/marmdb/session/e15ca1edccf42f07dd164694086ae30c/download/download_full_complete?w='
 # criação do df
 df = pd.read_csv(tabela_teste)
 
+# Retira todas as linhas que não possuem valores em ambas as colunas:
 df_limpo = df.dropna(subset=['drisee_score_raw_MGRAST', 'mean_quality_SRA'], how='all')
 
-#criação do df filtrado com base no fator de exclusão - mean_quality_SRA ser igual a zero ou não existir
-df_filtrado_NCBI = df_limpo[~((df['mean_quality_SRA'] == 0) | (~pd.to_numeric(df['mean_quality_SRA'], errors='coerce').notna()))]
+# Seleção das linhas onde o valor do mean_quality_SRA é aceitável (maior que trinta):
+df_filtrado_NCBI = df_limpo[df_limpo['mean_quality_SRA'] >= 30]
 
-df_filtrado_NCBI = df_filtrado_NCBI[df_filtrado_NCBI['mean_quality_SRA'] >= 30]
+# Seleção das linhas onde o valor do disee_score é aceitável (maior que 20):
+df_filtrado_MGRAST = df_limpo[df_limpo['drisee_score_raw_MGRAST'] >= 20]
 
-#criação do df filtrado com base no fator de exclusão - drisee_score ser igual a zero ou não existir
-df_filtrado_MGRAST = df_limpo[~((df['drisee_score_raw_MGRAST'] == 0) | (~pd.to_numeric(df['drisee_score_raw_MGRAST'], errors='coerce').notna()))]
+print(df_filtrado_NCBI)
+print(df_filtrado_MGRAST)
 
-df_filtrado_MGRAST = df_filtrado_MGRAST[df_filtrado_MGRAST['drisee_score_raw_MGRAST'] >= 20]
-print (df_filtrado_NCBI)
+df_unida = pd.concat([df_filtrado_NCBI, df_filtrado_MGRAST])
 
-# soma das amostras de qualidade do NCBI com o MG-RAST
-df_final = df_filtrado_NCBI + df_filtrado_MGRAST
-
-# df_final = df_final['sample_location']
-
-print (df_filtrado_NCBI)
+print(df_unida)
