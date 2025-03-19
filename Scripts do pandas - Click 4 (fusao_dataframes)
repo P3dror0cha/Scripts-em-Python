@@ -1,0 +1,64 @@
+# Tabela de Marmdb: Arrumar O CÓDIGO
+# Tabela MG-RAST: tabela_completa_mgrast.csv e dados_brutos.csv
+# Tabela NCBI: lista_ncbi_filtrada.csv
+
+# Código de fusão dos dataframes (click_4)
+import pandas as pd
+import numpy as np
+import click
+
+@click.command()
+
+def fusao_dos_dataframes():
+
+    dados_ncbi = pd.read_csv("lista_ncbi_filtrada.csv", delimiter=",", encoding="utf-8")
+    df_ncbi = pd.DataFrame(dados_ncbi)
+    print('Obtendo as informações da tabela do NCBI:')
+    print(df_ncbi)
+    print(df_ncbi.shape)
+    print(df_ncbi.columns)
+    
+    dados_mgrast_1 = pd.read_csv("tabela_completa_mgrast.csv", delimiter=",", encoding="utf-8")
+    df_mgrast_1 = pd.DataFrame(dados_mgrast_1)
+    print('Obtendo as informações da tabela do Mgrast:')
+    
+    dados_mgrast_2 = pd.read_csv("dados_brutos.csv", delimiter=",", encoding="utf-8")
+    df_mgrast_2 = pd.DataFrame(dados_mgrast_2)
+    print('Obtendo as informações das urls do Mgrast:')
+    
+    # Junção das tabelas do Mgrast:
+    df_mgrast_2 = df_mgrast_2.rename(columns={'sample_id': 'metagenome_id'})
+    tabela_completa_mgrast = pd.merge(df_mgrast_1, df_mgrast_2, on='metagenome_id', how='inner')
+    print('Juntando dados do mgrast em uma tabela.')
+    
+    # Tabela temporária MGRAST:
+    print('Fazendo a tabela temporária do mgrast:')
+    tabela_temp_mgrast = tabela_completa_mgrast[['created_on', 'metagenome_id', 'country', 'biome', 'sequence_type', 'drisee_score_raw', 'url']]
+    tabela_temp_mgrast = tabela_temp_mgrast.rename(columns={'created_on': 'date', 'metagenome_id': 'ids', 'biome': 'enviroment'})
+    tabela_temp_mgrast['origin'] = 'mgrast'
+    
+    print(tabela_temp_mgrast.columns)
+    
+    # Tabela temporária NCBI:
+    print('Fazendo a tabela temporária do NCBI:')
+    tabela_temp_ncbi = df_ncbi[['submission', 'SRA_id', 'bioproject_id', 'biosample_id', 'geo_loc_name', 'library_strategy', 'url']]
+    tabela_temp_ncbi = tabela_temp_ncbi.rename(columns={'submission': 'date', 'SRA_id': 'ids', 'geo_loc_name': 'country', 'library_strategy': 'sequence_type'})
+    
+    print(tabela_temp_ncbi)
+    print(tabela_temp_ncbi.columns)
+    print(tabela_temp_ncbi.shape)
+    
+    # Criando as colunas do dataframe final:
+    # Coluna 'ID':
+    #df_final = tabela_completa_mgrast.merge(df_ncbi, left_on="metagenome_id", right_on="SRA_id", how="outer")
+    #df_final = pd.DataFrame()
+    #df_final["Ids"] = pd.concat([tabela_completa_mgrast["metagenome_id"], df_ncbi["SRA_id"]], ignore_index=True)
+
+    #print(df_final)
+    #print(df_final.shape)
+    
+   
+
+    
+if __name__ == '__main__':
+     fusao_dos_dataframes()
