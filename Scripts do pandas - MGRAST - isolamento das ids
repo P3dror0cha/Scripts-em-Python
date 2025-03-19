@@ -1,0 +1,49 @@
+# CÓDIGO NÃO COMPLETO!
+# Função para obter os dados brutos de cada metagenoma:
+import pandas as pd
+import requests
+import click
+
+# Dicionários para armazenar os dados
+dados_brutos_normal = {}
+dados_brutos_wastewater = {}
+dados_brutos_coralreef = {}
+dados_brutos_ocean = {}
+dados_brutos_freshwater = {}
+dados_brutos_mangrove = {}
+
+def obter_dados_mg_rast(ids, dados_brutos):
+    for sample_id in ids:
+        url = f"https://api.mg-rast.org/1/download/{sample_id}"
+        response = requests.get(url, verify=False)
+
+        if response.status_code == 200:
+            dados_brutos[sample_id] = response.json()
+            print(f"Dados do sample {sample_id} obtidos com sucesso!")
+        else:
+            print(f"Falha ao obter dados para {sample_id}. Status code: {response.status_code}. Detalhes: {response.text}")
+
+    return dados_brutos
+
+dados_sequencias_normal = obter_dados_mg_rast(lista_de_ids_normal, dados_brutos_normal)
+dados_sequencias_wastewater = obter_dados_mg_rast(lista_de_ids_wastewater, dados_brutos_wastewater)
+dados_sequencias_coralreef = obter_dados_mg_rast(lista_de_ids_coralreef, dados_brutos_coralreef)
+dados_sequencias_ocean = obter_dados_mg_rast(lista_de_ids_ocean, dados_brutos_ocean)
+dados_sequencias_freshwater = obter_dados_mg_rast(lista_de_ids_freshwater, dados_brutos_freshwater)
+dados_sequencia_mangrove = obter_dados_mg_rast(lista_de_ids_mangrove, dados_brutos_mangrove)
+
+
+# Mostra os dados da sequencia normal:
+for sample_id, dados in dados_sequencias_normal.items():
+    print(f"\nDados para o sample normal {sample_id}:")
+    print(dados)
+
+
+for sample_id, dados in dados_sequencias_wastewater.items():
+    print(f"\nDados para o sample wastewater {sample_id}:")
+    print(dados)
+# Os dados estão em um arquivo json!
+
+#for sample_id, dados in dados_sequencias_normal.items():
+    #url_dados_sequencias_normal = [item["url"] for item in dados_sequencias_normal["data"] if "url" in item]
+    #print(url_dados_sequencias_normal)
