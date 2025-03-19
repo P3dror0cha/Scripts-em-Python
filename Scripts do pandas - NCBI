@@ -1,0 +1,483 @@
+# Código do NCBI
+# É necessário baixar o xmltodict e o Biopython via pip install!!!
+
+from Bio import Entrez
+import pandas as pd
+import xml.etree.ElementTree as ET
+import io
+import xmltodict
+import time
+import click
+import json
+import requests
+import re
+import xml.etree.ElementTree as ET
+
+# Chave da API: 94372c1e44aa8df940f2e7b790a761a25908
+# pesquisa = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=<database>&term=<query>'
+# termo = 'metagenome AND aquatic',
+Entrez.email = 'pedro.rodrigues.rocha@usp.br'
+Entrez.api_key = '94372c1e44aa8df940f2e7b790a761a25908'
+query = 'metagenome AND aquatic'
+
+# PESQUISA NA API ESEARCH:
+
+@click.command()
+@click.option('--termo_da_pesquisa_esearch', default=query, help="Termo de pesquisa no NCBI.")
+@click.option('--num_de_resultados_esearch', default=200, type=int, help="Número de resultados consultados.")
+@click.option('--termo_library_strategy', default="wgs", type=str, help="Seleciona apenas as linhas que contenham essas palavras na coluna library strategy da tabela final.")
+@click.option('--termo_library_instrument', default=['metagenomic', 'genomic'], type=str, help= "Seleciona apenas as linhas que contenham essas palavras na coluna library instrument da tabela final.")
+@click.option('--termo_geo_loc_name', default="brazil", help="Seleciona apenas as linhas que contenham essas palavras na geo_loc_name da tabela final.")
+def pesquisa_NCBI(termo_da_pesquisa_esearch, num_de_resultados_esearch, termo_library_strategy, termo_library_instrument, termo_geo_loc_name):
+  
+  pesquisa_search = Entrez.esearch(db='bioproject', term=termo_da_pesquisa_esearch, retmax=num_de_resultados_esearch)
+  resultados_search = Entrez.read(pesquisa_search)
+  pesquisa_search.close()
+  print(resultados_search)
+  print(f"Foram encontrados {resultados_search['Count']} total de resultados.")
+
+  # PESQUISA NA API EFETCH:
+  ###
+  ids_bioproject = []
+  accessions_bioproject = []
+  organism_name_bioproject = []
+  title_bioproject = []
+  submission_bioproject = []
+
+  lista_id = resultados_search['IdList']
+  num_de_ids = lista_id.copy()
+
+  concat = 0
+  c = 0
+  ###
+
+  while c < len(lista_id):
+    for id_number in num_de_ids:
+      try:
+        pesquisa_fetch = Entrez.efetch(db='bioproject', id=id_number, api_key= '94372c1e44aa8df940f2e7b790a761a25908', rettype='xml', retmode='xml')
+        print(f"Informação do {id_number} registrada.")
+        c+=1
+        num_de_ids.remove(id_number)
+        time.sleep(0.15)
+      except:
+        print(c, id_number)
+        break
+      # Ler o conteúdo XML bruto. Este dado retornará como bytes
+      resultados_fetch = pesquisa_fetch.read()
+      pesquisa_fetch.close()
+      # Convertendo os bytes para string
+      resultados_xml = resultados_fetch.decode('utf-8')
+      # É um arquivo em xml
+      resultados_dict = xmltodict.parse(resultados_xml)
+      ids_bioproject.append(resultados_dict['RecordSet']['DocumentSummary']['@uid'])
+      accessions_bioproject.append(resultados_dict['RecordSet']['DocumentSummary']['Project']['ProjectID']['ArchiveID']['@accession'])
+      title_bioproject.append(resultados_dict['RecordSet']['DocumentSummary']['Project']['ProjectDescr']['Title'])
+      submission_bioproject.append(resultados_dict['RecordSet']['DocumentSummary']['Submission']['@submitted'])
+
+      try:
+        organism_name_bioproject.append(resultados_dict['RecordSet']['DocumentSummary']['Project']['ProjectType']['ProjectTypeSubmission']['Target']['Organism']['OrganismName'])
+      except:
+        organism_name_bioproject.append('NA')
+
+
+    df_temp = [ids_bioproject, accessions_bioproject, organism_name_bioproject, title_bioproject, submission_bioproject]
+    df_temp = pd.DataFrame(df_temp)
+    df_temp = df_temp.transpose()
+    df_temp.columns = ['id', 'bioproject_id', 'organism_name', 'title', 'submission']
+    ids_bioproject = []
+    accessions_bioproject = []
+    organism_name_bioproject = []
+    title_bioproject = []
+    submission_bioproject = []
+    if concat == 0:
+      df_concat = df_temp
+      concat = 10
+    else:
+      df_concat = pd.concat([df_concat, df_temp])
+  print('Tabela inicial da pesquisa na base de dados Bioproject:')
+  print(df_concat)
+  
+  ids_str = ",".join(lista_id)
+  url = f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/elink.fcgi"
+  params = {
+          "dbfrom": "bioproject",
+          "db": "biosample",
+          "id": ids_str,
+          "api_key": "94372c1e44aa8df940f2e7b790a761a25908",
+          "retmode": "json"
+    }
+
+  response_link = requests.get(url, params=params)
+  data_link = response_link.json()
+  print('Esta é a lista de Bioproject ids:')
+  print(json.dumps(data_link, indent=4))
+  
+  biosample_ids = []
+
+  try:
+      for linkset in data_link["linksets"]:
+          for linksetdb in linkset.get("linksetdbs", []):
+              if linksetdb["dbto"] == "biosample":
+                  biosample_ids.extend(linksetdb["links"])
+  except KeyError:
+      print("A chave 'linksets' não foi encontrada no JSON.")
+  print('Esta é a lista de Biosample ids:')
+  print(biosample_ids)
+  print('Número de biosample ids:')
+  print(len(biosample_ids))
+    
+    ### INICIO DA PESQUISA DOS BIOSAMPLES:
+    
+    # Definição das listas para armazenar os dados
+  print('Iniciando pesquisa dos biosample ids:')
+  id_bioproject_biosample = []
+  accession_biosample = []
+  SRA_biosample = []
+  taxonomy_biosample = []  #taxonomy_name
+  owner_biosample = []
+  broad_scale_environmental_biosample = []
+  geo_loc_name_biosample = []
+  lat_and_lon_biosample = []
+  bioproject_biosample = []
+
+  # Definir quais IDs de amostras você quer pesquisar
+  # num_de_ids_biosample = len(biosample_ids)
+  num_de_ids_biosample = 5000
+
+  # Definir a chave de API do Entrez
+  Entrez.email = 'pedro.rodrigues.rocha@usp.br'
+  Entrez.api_key = '94372c1e44aa8df940f2e7b790a761a25908'
+
+  # Inicializa a variável para controlar a concatenação dos DataFrames
+  concat = 0
+  c = 0
+
+  # Loop para buscar as amostras
+  while c < num_de_ids_biosample:      # MUDAR AQUIIIII!!!!
+      for id_number in biosample_ids:
+          try:
+              # Realiza a pesquisa para obter o XML da amostra
+              pesquisa_fetch = Entrez.efetch(db='biosample', id=id_number, api_key=Entrez.api_key, rettype='xml', retmode='xml')
+              print(f"Informação do {id_number} registrada.")
+              c += 1
+              biosample_ids.remove(id_number)
+              time.sleep(0.15)
+          except:
+              print(c, id_number)
+              break
+
+          # Ler o conteúdo XML bruto
+          resultados_fetch_biosample = pesquisa_fetch.read()
+          pesquisa_fetch.close()
+
+          # Convertendo os bytes para string
+          resultados_biosample_xml = resultados_fetch_biosample.decode('utf-8')
+
+          # Convertendo o XML para um dicionário
+          resultados_biosample_dict = xmltodict.parse(resultados_biosample_xml)
+
+          # Atualiza o XML para a amostra atual
+          root = ET.fromstring(resultados_biosample_xml)
+
+          # Encontrar o "BioSample"
+          biosample = root.find(".//BioSample")
+
+          try:
+              id_bioproject_biosample.append(resultados_biosample_dict['BioSampleSet']['BioSample']['@id'])
+          except:
+              id_bioproject_biosample.append('ERRO AQUI')
+
+          try:
+              accession_biosample.append(resultados_biosample_dict['BioSampleSet']['BioSample']['@accession'])
+          except:
+              accession_biosample.append('ERRO AQUI')
+
+          # Verificar e extrair o SRA ID
+          if biosample is not None:
+              sra_element = biosample.find(".//Id[@db='SRA']")
+              if sra_element is not None:
+                  SRA_biosample.append(sra_element.text)  
+              else:
+                  SRA_biosample.append("ERRO: SRA não encontrado") 
+          else:
+              SRA_biosample.append("ERRO: BioSample não encontrado")
+
+          # Tentando obter outras informações
+          try:
+              taxonomy_biosample.append(resultados_biosample_dict['BioSampleSet']['BioSample']['Description']['Organism']['@taxonomy_name'])
+          except:
+              taxonomy_biosample.append('ERRO AQUI')
+
+          try:
+              owner_biosample.append(resultados_biosample_dict['BioSampleSet']['BioSample']['Owner']['Name']['#text'])
+          except:
+              try:
+                owner_biosample.append(resultados_biosample_dict['BioSampleSet']['BioSample']['Owner']['Name'])
+              except:
+                owner_biosample.append('ERRO AQUI')
+
+          try:
+              for attr in resultados_biosample_dict['BioSampleSet']['BioSample']['Attributes']['Attribute']:
+
+                if attr['@attribute_name'] == 'isolation_source':
+                  broad_scale_environmental_biosample.append(attr['#text'])
+          except:
+              broad_scale_environmental_biosample.append('ERRO AQUI')
+
+          try:
+              for attr in resultados_biosample_dict['BioSampleSet']['BioSample']['Attributes']['Attribute']:
+                if attr['@attribute_name'] == 'geo_loc_name':
+                  geo_loc_name_biosample.append(attr['#text'])
+          except:
+              geo_loc_name_biosample.append('ERRO AQUI')
+
+          try:
+              for attr in resultados_biosample_dict['BioSampleSet']['BioSample']['Attributes']['Attribute']:
+                if attr['@attribute_name'] == 'lat_lon':
+                  lat_and_lon_biosample.append(attr['#text'])
+          except:
+              lat_and_lon_biosample.append('ERRO AQUI')
+
+          try:
+              bioproject_biosample.append(resultados_biosample_dict['BioSampleSet']['BioSample']['Links']['Link']['@label'])
+          except:
+              bioproject_biosample.append('ERRO AQUI')
+
+      # Criar DataFrame temporário com as informações coletadas
+      df_temp_biosample = [id_bioproject_biosample, accession_biosample, SRA_biosample, taxonomy_biosample, owner_biosample, broad_scale_environmental_biosample, geo_loc_name_biosample, lat_and_lon_biosample, bioproject_biosample]
+      df_temp_biosample = pd.DataFrame(df_temp_biosample)
+      df_temp_biosample = df_temp_biosample.transpose()
+      df_temp_biosample.columns = ['id', 'biosample_id', 'SRA_id', 'taxonomy_name', 'owner', 'broad_scale_enviromental', 'geo_loc_name', 'lat_and_lon', 'bioproject_id']
+
+      # Resetando as listas para a próxima iteração
+      id_bioproject_biosample = []
+      accession_biosample = []
+      SRA_biosample = []
+      taxonomy_biosample = []
+      owner_biosample = []
+      broad_scale_environmental_biosample = []
+      local_scale_environmental_biosample = []
+      enviromental_medium_biosample = []
+      geo_loc_name_biosample = []
+      lat_and_lon_biosample = []
+      bioproject_biosample = []
+
+      # Concatenando os resultados
+      if concat == 0:
+          df_concat_biosample = df_temp_biosample
+          concat = 10
+      else:
+          df_concat_biosample = pd.concat([df_concat_biosample, df_temp_biosample])
+
+  # Exibindo o DataFrame final com todos os dados coletados
+  
+  print(df_concat_biosample)
+  print(df_concat_biosample.shape)
+  print(df_concat_biosample.columns)
+
+  print('Fusão dos dataframes Bioproject com Biosample:')
+  
+  tabela = pd.merge(df_concat_biosample, df_concat, on='bioproject_id', how='inner')
+  print(tabela.columns)
+
+  lista_sra = tabela['SRA_id'].tolist()
+  lista_sra_sem_prefixo = [re.sub(r"^(SRS|DRS|DRR|SRR)", "", sra) for sra in lista_sra]
+
+  print(lista_sra)
+  print('A lista de SRAs tem um tamanho de:')
+  print(len(lista_sra))
+  
+  print('Iniciando pesquisa na base SRA:')
+  
+  # Definição das listas para armazenar os dados
+  library_name = []
+  biosample_id = []
+  library_instrument = []
+  library_strategy = []
+  library_source = []
+  library_selection = []
+  library_layout = []
+  url_principal = []
+
+  # Definir quais IDs de amostras você quer pesquisar
+  # num_de_ids_sra = len(lista_sra)
+  num_de_ids_sra = 5000
+
+  # Definir a chave de API do Entrez
+  Entrez.email = 'pedro.rodrigues.rocha@usp.br'
+  Entrez.api_key = '94372c1e44aa8df940f2e7b790a761a25908'
+
+  # Inicializa a variável para controlar a concatenação dos DataFrames
+  concat = 0
+  c = 0
+
+  # Loop para buscar as amostras
+  while c < num_de_ids_sra:
+      for id_number in lista_sra:  # Itera sobre uma cópia da lista (não modifica a original)
+          try:
+              print(f'Processando: {id_number}')
+
+              # Realiza a pesquisa esearch para obter a amostra correta:
+              pesquisa_esearch = Entrez.esearch(db='sra', term=id_number, retmode='xml')
+              resultado_esearch = Entrez.read(pesquisa_esearch)
+              print(resultado_esearch)
+              pesquisa_esearch.close()
+
+              pesquisa_fetch_sra = Entrez.efetch(db='sra', id=resultado_esearch['IdList'][0], api_key=Entrez.api_key, rettype='xml', retmode='xml')
+              print(f"Informação do {id_number} registrada.")
+              c += 1
+              lista_sra.remove(id_number)
+
+              # Ler o conteúdo XML bruto
+              resultados_fetch_sra = pesquisa_fetch_sra.read()
+              pesquisa_fetch_sra.close()
+
+              # Convertendo os bytes para string
+              resultados_sra_xml = resultados_fetch_sra.decode('utf-8')
+
+              # Convertendo o XML para um dicionário
+              resultados_sra_dict = xmltodict.parse(resultados_sra_xml)
+              
+              # Encontrando as urls:
+              root = ET.fromstring(resultados_sra_xml)
+              urls = [sra_file.get('url') for sra_file in root.findall(".//SRAFile")]
+
+              # Filtrando os valores None da lista de URLs
+              urls = [url for url in urls if url is not None]
+
+              # Depuração: imprimir as URLs encontradas
+              print(f"URLs extraídas para {id_number}: {urls}")
+
+              # Adicionando ao dicionário apenas se houver URLs
+              url_principal[id_number] = urls if urls else ["Nenhuma URL encontrada"]
+
+              # Criando o DataFrame corretamente
+              df_teste = pd.DataFrame(list(url_principal.items()), columns=['SRA_id', 'URLs'])
+
+              # Convertendo listas para strings no DataFrame
+              df_teste['URLs'] = df_teste['URLs'].apply(lambda x: ', '.join(map(str, x)))
+
+              # Preenchendo as listas com os dados
+              try:
+                  biosample_id.append(resultados_sra_dict['EXPERIMENT_PACKAGE_SET']['EXPERIMENT_PACKAGE']['SAMPLE']['IDENTIFIERS']['EXTERNAL_ID']['#text'])
+              except KeyError:
+                  biosample_id.append('ERRO AQUI')
+
+              try:
+                  library_name.append(resultados_sra_dict['EXPERIMENT_PACKAGE_SET']['EXPERIMENT_PACKAGE']['EXPERIMENT']['DESIGN']['LIBRARY_DESCRIPTOR']['LIBRARY_NAME'])
+              except KeyError:
+                  library_name.append('ERRO AQUI')
+
+              try:
+                  library_instrument.append(resultados_sra_dict['EXPERIMENT_PACKAGE_SET']['EXPERIMENT_PACKAGE']['EXPERIMENT']['DESIGN']['LIBRARY_DESCRIPTOR']['LIBRARY_SOURCE'])
+              except KeyError:
+                  library_instrument.append('ERRO AQUI')
+
+              try:
+                  library_strategy.append(resultados_sra_dict['EXPERIMENT_PACKAGE_SET']['EXPERIMENT_PACKAGE']['EXPERIMENT']['DESIGN']['LIBRARY_DESCRIPTOR']['LIBRARY_STRATEGY'])
+              except KeyError:
+                  library_strategy.append('ERRO AQUI')
+
+              try:
+                  library_source.append(resultados_sra_dict['EXPERIMENT_PACKAGE_SET']['EXPERIMENT_PACKAGE']['EXPERIMENT']['DESIGN']['LIBRARY_DESCRIPTOR']['LIBRARY_SOURCE'])
+              except KeyError:
+                  library_source.append('ERRO AQUI')
+
+              try:
+                  library_selection.append(resultados_sra_dict['EXPERIMENT_PACKAGE_SET']['EXPERIMENT_PACKAGE']['EXPERIMENT']['DESIGN']['LIBRARY_DESCRIPTOR']['LIBRARY_SELECTION'])
+              except KeyError:
+                  library_selection.append('ERRO AQUI')
+
+              try:
+                  library_layout.append(resultados_sra_dict['EXPERIMENT_PACKAGE_SET']['EXPERIMENT_PACKAGE']['EXPERIMENT']['DESIGN']['LIBRARY_DESCRIPTOR']['LIBRARY_LAYOUT'])
+              except KeyError:
+                  library_layout.append('ERRO AQUI')
+
+              # Pausa entre requisições
+              time.sleep(0.05)
+
+          except Exception as e:
+              print(f'Erro no ID {id_number}: {e}')
+              continue  # Continua para o próximo ID em caso de erro
+
+      # Criar DataFrame temporário com as informações coletadas
+      df_temp_sra = [library_name, biosample_id, library_instrument, library_strategy, library_source, library_selection, library_layout]
+      df_temp_sra = pd.DataFrame(df_temp_sra).transpose()
+      df_temp_sra.columns = ['library_name', 'biosample_id', 'library_instrument', 'library_strategy', 'library_source', 'library_selection', 'library_layout']
+
+      # Resetando as listas
+      library_name = []
+      biosample_id = []
+      library_instrument = []
+      library_strategy = []
+      library_source = []
+      library_selection = []
+      library_layout = []
+      url_principal = []
+
+      # Concatenando os resultados
+      if concat == 0:
+          df_concat_sra = df_temp_sra
+          concat = 10
+      else:
+          df_concat_sra = pd.concat([df_concat_sra, df_temp_sra], ignore_index=True)
+
+  # Exibindo o DataFrame final com todos os dados coletados
+  print("Tabela SRA gerada com sucesso! Dataframe com as informações de biosample, bioproject e SRA criado.")
+  print("df_concat_sra:")
+  print(df_concat_sra)
+  print("df_teste:")
+  print(df_teste.columns)
+  print(df_teste)
+  
+  # Dividindo as URLs da coluna 'URLs' em várias colunas (quantas forem necessárias)
+  df_teste = df_teste.join(df_teste['URLs'].str.split(', ', expand=True))
+
+  df_teste.rename(columns={0: 'URL_1', 1: 'URL_2', 2: 'URL_3', 3: 'URL_4', 4: 'URL_5', 5: 'URL'}, inplace=True)
+
+  print('Juntando todas as tabelas (Bioproject, Biosample e SRA):')
+  tabela_com_sra = pd.merge(df_concat_sra, tabela, on='biosample_id', how='inner')
+  tabela_com_sra_e_urls = pd.merge(tabela_com_sra, df_teste, on='SRA_id', how='inner') 
+  print('Tabelas unidas com sucesso!')
+  print(tabela_com_sra_e_urls)
+  print(tabela_com_sra_e_urls.shape)
+  print(tabela_com_sra_e_urls.columns)
+  
+  with pd.option_context('display.max_rows', None):  # Aplica a opção para visualizar todas as respostas.
+    print(tabela_com_sra_e_urls['broad_scale_enviromental'].value_counts())
+    print(tabela_com_sra_e_urls.value_counts('library_name'))
+    print(tabela_com_sra_e_urls.value_counts('library_instrument'))
+    print(tabela_com_sra_e_urls.value_counts('library_strategy'))
+    print(tabela_com_sra_e_urls.value_counts('broad_scale_enviromental'))
+    print(tabela_com_sra_e_urls.value_counts('geo_loc_name'))
+    print(tabela_com_sra_e_urls.value_counts('bioproject_id'))
+    print(tabela_com_sra_e_urls.value_counts('organism_name'))
+    
+  # Filtragem da tabela final (bioproject + biosample + sra):
+  
+  # Retira transcriptomas:
+  padrao = '|'.join(termo_library_instrument)  # Junta os termos com '|'
+  tabela_com_sra_filtrada = tabela_com_sra_e_urls.loc[tabela_com_sra_e_urls['library_instrument'].str.contains(padrao, case=False, na=False)]
+  
+  # Seleciona whole metagenome sequence:
+  padrao2 = '|'.join(termo_library_strategy)
+  tabela_com_sra_filtrada = tabela_com_sra_filtrada.loc[tabela_com_sra_filtrada['library_strategy'].str.contains(padrao2, case=False, na=False)]
+  
+  # Seleciona amostras Brasileiras:
+  padrao3 = '|'.join(termo_geo_loc_name)
+  tabela_com_sra_filtrada = tabela_com_sra_filtrada.loc[tabela_com_sra_filtrada['geo_loc_name'].str.contains(padrao3, case=False, na=False)]
+  
+  print(f'A tabela final filtrada de todas as amostras: Filtros usados: {termo_library_strategy}, {termo_library_instrument}, {termo_geo_loc_name}')
+
+  print(tabela_com_sra_filtrada)
+  print(tabela_com_sra_filtrada.shape)
+  print(tabela_com_sra_filtrada.columns)
+  
+  print('Fazendo o download da tabela para .csv:')
+  
+  tabela_com_sra_filtrada.to_csv('lista_ncbi_filtrada.csv', index=False)
+  
+  print("O arquivo CSV foi gerado!")
+  
+if __name__ == "__main__":
+    pesquisa_NCBI()
