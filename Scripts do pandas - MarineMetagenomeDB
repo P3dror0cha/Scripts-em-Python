@@ -1,21 +1,74 @@
-import pandas as pd
-# download da tabela
-tabela_teste = 'https://web.app.ufz.de/marmdb/session/e15ca1edccf42f07dd164694086ae30c/download/download_full_complete?w='
-# criação do df
-df = pd.read_csv(tabela_teste)
+import click
+import pandas as pd # Não colocar variáveis com letra maiuscula.
+import yaml # pyyaml
 
-# Retira todas as linhas que não possuem valores em ambas as colunas:
-df_limpo = df.dropna(subset=['drisee_score_raw_MGRAST', 'mean_quality_SRA'], how='all')
+@click.command() # É um decorador do click. Modifica a função para que ela funcione como um comando de linha de comando.
+@click.option("--url") # O .argument é usado para parâmetros obrigatórios e posicionais. Sempre lembrar do "--" antes do nome.
+@click.option("--mean_quality_sra", default=30.0, type=int, help="Qualidade mínima do SRA. Varia de 0 a 100.") # O .option é usado para parâmetros opcionais ou com opções nomeadas.
+@click.option("--drisee_score_raw_mgrast", default=5.0, type=int, help= "Valor mínimo da taxa de erro drisee score. Varia de  0 a 100. O valor default é 5.")
+@click.option("--country", default="Brazil", type=str, help= "País selecionado para a filtragem. Default é Brazil.")
 
-# Seleção das linhas onde o valor do mean_quality_SRA é aceitável (maior que trinta):
-df_filtrado_NCBI = df_limpo[df_limpo['mean_quality_SRA'] >= 30]
+def downloadMarmdb(url, mean_quality_sra, drisee_score_raw_mgrast, country): # Não é preciso colocar os valores defalt na fução, como neste exemplo: def downloadMarmdb(url, mean_quality_sra = 30, drisee_score_raw_mgrast = 5)
+  '''
+  downloadMarmdb é uma função que filtra os dados do banco MarineMetagenomeDB com base nos padrões de qualidade.
+  Params
+  -url: url da tabela bruta do MarinemtagenomeDB  
+  -mean_quality_sra: parâmetro de qualidade para amostras vindas do NCBI.
+  -drisee_score_raw_mgrast: parâmetro de qualidade para as amssotras do MG-RAST.
+  Returns
+  pd.DataFrame com os dados filtrados de acordo com a qualidade.
+  '''
+  # url da tabela bruta do MarinemtagenomeDB - A tabela está em CSV
+  # Criação do DataFrame usando o pandas
+  df = pd.read_csv(url)
+  df.set_index('library_id', inplace=True)
+  pd.set_option('display.max_columns', 200)
+  pd.set_option('display.max_rows', 10)
+  pd.set_option('display.width', 500)
+  
+  with open('../codigos_vs_code/config.yaml', 'r') as f:
+    config = yaml.safe_load(f)
+  
+  click.echo(message="Iniciando o processamento...")
+  
+  # Retira todas as linhas que não possuem valores em ambas as colunas:
+  df_limpo = df.dropna(subset=['drisee_score_raw_MGRAST', 'mean_quality_SRA'], how='all')
 
-# Seleção das linhas onde o valor do disee_score é aceitável (maior que 20):
-df_filtrado_MGRAST = df_limpo[df_limpo['drisee_score_raw_MGRAST'] >= 20]
+  # Seleção das linhas onde o valor do mean_quality_sra é aceitável (maior que trinta):
+  df_filtrado_NCBI = df_limpo[df_limpo['mean_quality_SRA'] >= mean_quality_sra] # config['mean_quality_sra']
 
-print(df_filtrado_NCBI)
-print(df_filtrado_MGRAST)
+  # Seleção das linhas onde o valor do disee_score é aceitável (menor que 5):
+  df_filtrado_MGRAST = df_limpo[df_limpo['drisee_score_raw_MGRAST'] <= drisee_score_raw_mgrast] # config['drisee_score_raw_mgrast']
 
-df_unida = pd.concat([df_filtrado_NCBI, df_filtrado_MGRAST])
+  # Juntando os dataframes:
+  df_limpo = pd.concat([df_filtrado_NCBI, df_filtrado_MGRAST])
+  click.echo(message=f"DataFrame inicial com {df_limpo.shape[0]} linhas e {df_limpo.shape[1]} colunas.")
+  
+  #Filtragem quanto a nacionalidade:
+  df_limpo = df_limpo[df_limpo['sample_location_country'] == country] # config['country']
+  click.echo(message=f"Amostras filtradas usando {config['country']} ")
+  
+  # Filtro 3: Filtrando pelo local onde as amostras foram retiradas.
+  df_limpo_coralreef = df_limpo[df_limpo['MarMDB_marine_ecosystem'].str.lower() == 'coral reef']
+  df_limpo_estuary = df_limpo[df_limpo['MarMDB_marine_ecosystem'].str.lower() == 'estuary']
+  df_limpo_ocean = df_limpo[df_limpo['MarMDB_biome'].str.lower() == 'ocean']
+  
+  # Retirando colunas repetidas entre o df_limpo_ocean e o df_limpo_coralreef:
+  df_limpo_ocean = df_limpo_ocean[df_limpo_ocean['MarMDB_marine_ecosystem'] != 'coral reef']
+  df_limpo_ocean.value_counts('MarMDB_marine_ecosystem', dropna=False)
+  click.echo(message="Amostras filtradas quanto ao tipo de água. Os tipos coletados foram: 'coral reef', 'estuary', 'ocean'.")
+  
+  click.echo(message="Iniciando downloads...")
+  
+  df_limpo.to_csv("df_limpo_marmdb.csv")
+  #df_limpo_estuary.to_csv("df_limpo_estuary.csv")
+  #df_limpo_coralreef.to_csv("df_limpo_coralreef.csv")
+  #df_limpo_ocean.to_csv("df_limpo_ocean.csv")
+  
+  click.echo(message="Download concluído.")
+  
+  
+  return df_limpo.columns
 
-print(df_unida)
+if __name__ == '__main__':
+     downloadMarmdb()
