@@ -58,16 +58,16 @@ def pesquisa_NCBI(termo_da_pesquisa_esearch, num_de_resultados_esearch, termo_li
         print(f"Informação do {id_number} registrada.")
         c+=1
         num_de_ids.remove(id_number)
-        time.sleep(0.15)
+        time.sleep(0.05)
       except:
         print(c, id_number)
         break
-      # Ler o conteúdo XML bruto. Este dado retornará como bytes
+      
       resultados_fetch = pesquisa_fetch.read()
       pesquisa_fetch.close()
-      # Convertendo os bytes para string
+      
       resultados_xml = resultados_fetch.decode('utf-8')
-      # É um arquivo em xml
+      
       resultados_dict = xmltodict.parse(resultados_xml)
       ids_bioproject.append(resultados_dict['RecordSet']['DocumentSummary']['@uid'])
       accessions_bioproject.append(resultados_dict['RecordSet']['DocumentSummary']['Project']['ProjectID']['ArchiveID']['@accession'])
@@ -141,8 +141,7 @@ def pesquisa_NCBI(termo_da_pesquisa_esearch, num_de_resultados_esearch, termo_li
   bioproject_biosample = []
 
   # Definir quais IDs de amostras você quer pesquisar
-  # num_de_ids_biosample = len(biosample_ids)
-  num_de_ids_biosample = 5000
+  num_de_ids_biosample = len(biosample_ids)
 
   # Definir a chave de API do Entrez
   Entrez.email = 'pedro.rodrigues.rocha@usp.br'
@@ -161,7 +160,7 @@ def pesquisa_NCBI(termo_da_pesquisa_esearch, num_de_resultados_esearch, termo_li
               print(f"Informação do {id_number} registrada.")
               c += 1
               biosample_ids.remove(id_number)
-              time.sleep(0.15)
+              time.sleep(0.05)
           except:
               print(c, id_number)
               break
@@ -298,10 +297,13 @@ def pesquisa_NCBI(termo_da_pesquisa_esearch, num_de_resultados_esearch, termo_li
   library_selection = []
   library_layout = []
   url_principal = []
+  
+  # Criando o DataFrame corretamente
+  df_teste = pd.DataFrame(list(url_principal.items()), columns=['SRA_id', 'URLs'])
 
   # Definir quais IDs de amostras você quer pesquisar
-  # num_de_ids_sra = len(lista_sra)
-  num_de_ids_sra = 5000
+  num_de_ids_sra = len(lista_sra)
+  
 
   # Definir a chave de API do Entrez
   Entrez.email = 'pedro.rodrigues.rocha@usp.br'
@@ -350,9 +352,6 @@ def pesquisa_NCBI(termo_da_pesquisa_esearch, num_de_resultados_esearch, termo_li
 
               # Adicionando ao dicionário apenas se houver URLs
               url_principal[id_number] = urls if urls else ["Nenhuma URL encontrada"]
-
-              # Criando o DataFrame corretamente
-              df_teste = pd.DataFrame(list(url_principal.items()), columns=['SRA_id', 'URLs'])
 
               # Convertendo listas para strings no DataFrame
               df_teste['URLs'] = df_teste['URLs'].apply(lambda x: ', '.join(map(str, x)))
