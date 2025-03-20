@@ -29,7 +29,17 @@ query = 'metagenome AND aquatic'
 @click.option('--termo_library_instrument', default=['metagenomic', 'genomic'], type=str, help= "Seleciona apenas as linhas que contenham essas palavras na coluna library instrument da tabela final.")
 @click.option('--termo_geo_loc_name', default="brazil", help="Seleciona apenas as linhas que contenham essas palavras na geo_loc_name da tabela final.")
 def pesquisa_NCBI(termo_da_pesquisa_esearch, num_de_resultados_esearch, termo_library_strategy, termo_library_instrument, termo_geo_loc_name):
-
+  '''
+  pesquisa_NCBI é uma função que faz o download e a filtragem dos dados da base NCBI. Ao final, o código criará um dataframe com as informações de Id, Data, Local da coleta, Tipo de sequência e Url.
+  Params
+  -termo_da_pesquisa_esearch: Termo bruto inicial usado para fazer a pesquisa no Entrez. O default é: 'metagenome AND aquatic'. 
+  -num_de_resultados_esearch: Parâmetro que determina quantos Bioprojects serão lidos pelo programa. O default é: 200.
+  -termo_library_strategy: Seleciona o tipo de material genético que será pesquisado. O default é: "wgs".
+  -termo_library_instrument: Seleciona o tipo de biblioteca que será pesquisada. O default é: ['metagenomic', 'genomic'].
+  -termo_geo_loc_name: Seleciona o local da onde as amostras foram retiradas. O default é: "brazil".
+  Returns
+  pd.DataFrame com os dados filtrados de acordo com a qualidade.
+  '''
   # INÍCIO DA PESQUISA DE BIOPROJECT:
 
   pesquisa_search = Entrez.esearch(db='bioproject', term=termo_da_pesquisa_esearch, retmax=num_de_resultados_esearch)
