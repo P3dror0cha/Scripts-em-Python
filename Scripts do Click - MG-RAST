@@ -1,6 +1,7 @@
 import pandas as pd
 import requests
 import click
+import csv
 
 @click.command()
 @click.option("--url", default='https://api.mg-rast.org/search?country=Brazil&limit=100', type=str, help="url para a pesquisa dos dados no MG-RAST. O default é: 'https://api.mg-rast.org/search?country=Brazil&limit=100' ")
@@ -29,7 +30,7 @@ def mgrast_download_e_filtragem(url, requisitions, biome, sequence_type):
                 x += 1
                 print(x)
                 
-                # Atualização da URL para as próximas páginas
+                # Atualização da url:
                 url = data.get('next', None)
                 if requisitions < x:  # Limite de requisições (pode ser alterado conforme necessidade)
                     break
@@ -134,7 +135,6 @@ def mgrast_download_e_filtragem(url, requisitions, biome, sequence_type):
     print(df_limpo_sequence_type.shape)
     print(df_limpo_sequence_type.columns)
         
-    # Fazendo uma lista com base na coluna de IDs do DataFrame:
     lista_de_ids_normal = df_limpo_normal['metagenome_id'].tolist()
     lista_de_ids_wastewater = df_limpo_wastewater['metagenome_id'].tolist()
     lista_de_ids_coralreef = df_coral_reef['metagenome_id'].tolist()
@@ -145,7 +145,6 @@ def mgrast_download_e_filtragem(url, requisitions, biome, sequence_type):
     print(len(lista_de_ids_wastewater))
     print('Código mg-rast.py concluído!')
        
-    import csv 
     dados_brutos = {} 
     for sample_id in lista_de_ids_totais:
         url = f"https://api.mg-rast.org/1/download/{sample_id}"
@@ -153,9 +152,8 @@ def mgrast_download_e_filtragem(url, requisitions, biome, sequence_type):
 
         if response.status_code == 200:
             resposta_json = response.json()  # Converte a resposta para JSON
-            print(f"Resposta da API para {sample_id}: {resposta_json}")  # Debug
+            print(f"Resposta da API para {sample_id}: {resposta_json}")  
 
-            # Se houver 'data' na resposta, percorre e extrai as URLs
             urls = []
             if 'data' in resposta_json:
                 for item in resposta_json['data']:
@@ -173,7 +171,6 @@ def mgrast_download_e_filtragem(url, requisitions, biome, sequence_type):
     # Exibindo os resultados (ID -> lista de URLs)
     print(dados_brutos)
     
-     # Salvando no CSV
     csv_filename = "url_brutas_mgrast.csv"
 
     with open(csv_filename, "w", newline="") as csvfile:
