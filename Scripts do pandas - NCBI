@@ -299,7 +299,6 @@ def pesquisa_NCBI(termo_da_pesquisa_esearch, num_de_resultados_esearch, termo_li
   concat = 0
   c = 0
 
-  # Loop para buscar as amostras
   while c < num_de_ids_sra:
       for id_number in lista_sra:  # Itera sobre uma cópia da lista (não modifica a original)
           try:
@@ -311,38 +310,27 @@ def pesquisa_NCBI(termo_da_pesquisa_esearch, num_de_resultados_esearch, termo_li
               print(resultado_esearch)
               pesquisa_esearch.close()
 
+              # Realiza a pesquisa efetch para obter os resultados de cada id encontrado no esearch:
               pesquisa_fetch_sra = Entrez.efetch(db='sra', id=resultado_esearch['IdList'][0], api_key=Entrez.api_key, rettype='xml', retmode='xml')
               print(f"Informação do {id_number} registrada.")
               c += 1
               lista_sra.remove(id_number)
 
-              # Ler o conteúdo XML bruto
               resultados_fetch_sra = pesquisa_fetch_sra.read()
               pesquisa_fetch_sra.close()
 
-              # Convertendo os bytes para string
               resultados_sra_xml = resultados_fetch_sra.decode('utf-8')
 
-              # Convertendo o XML para um dicionário
               resultados_sra_dict = xmltodict.parse(resultados_sra_xml)
-              
-              # Encontrando as urls:
+
+              # Obtendo a coluna das urls:
               root = ET.fromstring(resultados_sra_xml)
               urls = [sra_file.get('url') for sra_file in root.findall(".//SRAFile")]
-
-              # Filtrando os valores None da lista de URLs
               urls = [url for url in urls if url is not None]
-
-              # Depuração: imprimir as URLs encontradas
               print(f"URLs extraídas para {id_number}: {urls}")
-
-              # Adicionando ao dicionário apenas se houver URLs
               url_principal[id_number] = urls if urls else ["Nenhuma URL encontrada"]
-
-              # Convertendo listas para strings no DataFrame
               df_teste['URLs'] = df_teste['URLs'].apply(lambda x: ', '.join(map(str, x)))
 
-              # Preenchendo as listas com os dados
               try:
                   biosample_id.append(resultados_sra_dict['EXPERIMENT_PACKAGE_SET']['EXPERIMENT_PACKAGE']['SAMPLE']['IDENTIFIERS']['EXTERNAL_ID']['#text'])
               except KeyError:
@@ -385,12 +373,10 @@ def pesquisa_NCBI(termo_da_pesquisa_esearch, num_de_resultados_esearch, termo_li
               print(f'Erro no ID {id_number}: {e}')
               continue  # Continua para o próximo ID em caso de erro
 
-      # Criar DataFrame temporário com as informações coletadas
       df_temp_sra = [library_name, biosample_id, library_instrument, library_strategy, library_source, library_selection, library_layout]
       df_temp_sra = pd.DataFrame(df_temp_sra).transpose()
       df_temp_sra.columns = ['library_name', 'biosample_id', 'library_instrument', 'library_strategy', 'library_source', 'library_selection', 'library_layout']
 
-      # Resetando as listas
       library_name = []
       biosample_id = []
       library_instrument = []
@@ -400,14 +386,12 @@ def pesquisa_NCBI(termo_da_pesquisa_esearch, num_de_resultados_esearch, termo_li
       library_layout = []
       url_principal = []
 
-      # Concatenando os resultados
       if concat == 0:
           df_concat_sra = df_temp_sra
           concat = 10
       else:
           df_concat_sra = pd.concat([df_concat_sra, df_temp_sra], ignore_index=True)
 
-  # Exibindo o DataFrame final com todos os dados coletados
   print("Tabela SRA gerada com sucesso! Dataframe com as informações de biosample, bioproject e SRA criado.")
   print("df_concat_sra:")
   print(df_concat_sra)
@@ -415,9 +399,8 @@ def pesquisa_NCBI(termo_da_pesquisa_esearch, num_de_resultados_esearch, termo_li
   print(df_teste.columns)
   print(df_teste)
   
-  # Dividindo as URLs da coluna 'URLs' em várias colunas (quantas forem necessárias)
+  # Dividindo as urls separadamente:
   df_teste = df_teste.join(df_teste['URLs'].str.split(', ', expand=True))
-
   df_teste.rename(columns={0: 'URL_1', 1: 'URL_2', 2: 'URL_3', 3: 'URL_4', 4: 'URL_5', 5: 'URL'}, inplace=True)
 
   print('Juntando todas as tabelas (Bioproject, Biosample e SRA):')
@@ -440,7 +423,7 @@ def pesquisa_NCBI(termo_da_pesquisa_esearch, num_de_resultados_esearch, termo_li
     
   # Filtragem da tabela final (bioproject + biosample + sra):
   
-  # Retira transcriptomas:
+  # Retira transcriptomas, selecionando genomas e metagenomas:
   padrao = '|'.join(termo_library_instrument)  # Junta os termos com '|'
   tabela_com_sra_filtrada = tabela_com_sra_e_urls.loc[tabela_com_sra_e_urls['library_instrument'].str.contains(padrao, case=False, na=False)]
   
