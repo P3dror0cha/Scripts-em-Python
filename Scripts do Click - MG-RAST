@@ -10,6 +10,14 @@ import csv
 @click.option("--sequence_type", default="WGS", type=str, help="Seleciona o tipo de sequência que será escolhida pelo código.")
 
 def mgrast_download_e_filtragem(url, requisitions, biome, sequence_type):
+ '''
+  mgrast_download_e_filtragem é uma função que faz o download e a filtragem dos dados da base MGRAST. Ao final, o código criará um dataframe com as informações de Id, Data, Local da coleta (país), Bioma, Tipo de sequência e Url.
+  Params
+  -url: Termo inicial usado para fazer a pesquisa no MGRAST. O default é: 'https://api.mg-rast.org/search?country=Brazil&limit=100'. 
+  -requisitions: Parâmetro que determina o número de requisições que o código fará. Cada requisição lê 100 metagenomas. O default é: 5.
+  -biome: Seleciona o tipo de local da onde os metagenomas sairão. O default é: "marine|mangrove|aquatic|freshwater|coral|ocean|estuarine|reef|river|oceanic|sea|lake".
+  -sequence_type: Seleciona o tipo de genoma que será pesquisada. O default é: "WGS".
+  '''
     x = 0
     resultados_totais = []
     while url:
