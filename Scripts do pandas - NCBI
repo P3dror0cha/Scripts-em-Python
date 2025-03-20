@@ -1,5 +1,5 @@
 # Código do NCBI
-# É necessário baixar o xmltodict e o Biopython via pip install!!!
+# É necessário baixar o Biopython, xmltodict, pandas e o requests via pip install!!!
 
 from Bio import Entrez
 import pandas as pd
@@ -29,7 +29,9 @@ query = 'metagenome AND aquatic'
 @click.option('--termo_library_instrument', default=['metagenomic', 'genomic'], type=str, help= "Seleciona apenas as linhas que contenham essas palavras na coluna library instrument da tabela final.")
 @click.option('--termo_geo_loc_name', default="brazil", help="Seleciona apenas as linhas que contenham essas palavras na geo_loc_name da tabela final.")
 def pesquisa_NCBI(termo_da_pesquisa_esearch, num_de_resultados_esearch, termo_library_strategy, termo_library_instrument, termo_geo_loc_name):
-  
+
+  # INÍCIO DA PESQUISA DE BIOPROJECT:
+
   pesquisa_search = Entrez.esearch(db='bioproject', term=termo_da_pesquisa_esearch, retmax=num_de_resultados_esearch)
   resultados_search = Entrez.read(pesquisa_search)
   pesquisa_search.close()
@@ -96,7 +98,9 @@ def pesquisa_NCBI(termo_da_pesquisa_esearch, num_de_resultados_esearch, termo_li
       df_concat = pd.concat([df_concat, df_temp])
   print('Tabela inicial da pesquisa na base de dados Bioproject:')
   print(df_concat)
-  
+
+  # FINAL DA PESQUISA DE BIOPROJECT.
+
   ids_str = ",".join(lista_id)
   url = f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/elink.fcgi"
   params = {
@@ -128,7 +132,6 @@ def pesquisa_NCBI(termo_da_pesquisa_esearch, num_de_resultados_esearch, termo_li
     
     ### INICIO DA PESQUISA DOS BIOSAMPLES:
     
-    # Definição das listas para armazenar os dados
   print('Iniciando pesquisa dos biosample ids:')
   id_bioproject_biosample = []
   accession_biosample = []
@@ -140,22 +143,17 @@ def pesquisa_NCBI(termo_da_pesquisa_esearch, num_de_resultados_esearch, termo_li
   lat_and_lon_biosample = []
   bioproject_biosample = []
 
-  # Definir quais IDs de amostras você quer pesquisar
   num_de_ids_biosample = len(biosample_ids)
 
-  # Definir a chave de API do Entrez
   Entrez.email = 'pedro.rodrigues.rocha@usp.br'
   Entrez.api_key = '94372c1e44aa8df940f2e7b790a761a25908'
 
-  # Inicializa a variável para controlar a concatenação dos DataFrames
   concat = 0
   c = 0
 
-  # Loop para buscar as amostras
   while c < num_de_ids_biosample:      # MUDAR AQUIIIII!!!!
       for id_number in biosample_ids:
           try:
-              # Realiza a pesquisa para obter o XML da amostra
               pesquisa_fetch = Entrez.efetch(db='biosample', id=id_number, api_key=Entrez.api_key, rettype='xml', retmode='xml')
               print(f"Informação do {id_number} registrada.")
               c += 1
@@ -165,20 +163,18 @@ def pesquisa_NCBI(termo_da_pesquisa_esearch, num_de_resultados_esearch, termo_li
               print(c, id_number)
               break
 
-          # Ler o conteúdo XML bruto
           resultados_fetch_biosample = pesquisa_fetch.read()
           pesquisa_fetch.close()
 
-          # Convertendo os bytes para string
+          # Convertendo de bytes para string
           resultados_biosample_xml = resultados_fetch_biosample.decode('utf-8')
 
-          # Convertendo o XML para um dicionário
+          # Convertendo de XML para um dicionário
           resultados_biosample_dict = xmltodict.parse(resultados_biosample_xml)
 
           # Atualiza o XML para a amostra atual
           root = ET.fromstring(resultados_biosample_xml)
 
-          # Encontrar o "BioSample"
           biosample = root.find(".//BioSample")
 
           try:
@@ -191,7 +187,6 @@ def pesquisa_NCBI(termo_da_pesquisa_esearch, num_de_resultados_esearch, termo_li
           except:
               accession_biosample.append('ERRO AQUI')
 
-          # Verificar e extrair o SRA ID
           if biosample is not None:
               sra_element = biosample.find(".//Id[@db='SRA']")
               if sra_element is not None:
@@ -242,13 +237,13 @@ def pesquisa_NCBI(termo_da_pesquisa_esearch, num_de_resultados_esearch, termo_li
           except:
               bioproject_biosample.append('ERRO AQUI')
 
-      # Criar DataFrame temporário com as informações coletadas
+      # Este código cria um dataframe temporário para armazenar as informações e transfere para o df final:
       df_temp_biosample = [id_bioproject_biosample, accession_biosample, SRA_biosample, taxonomy_biosample, owner_biosample, broad_scale_environmental_biosample, geo_loc_name_biosample, lat_and_lon_biosample, bioproject_biosample]
       df_temp_biosample = pd.DataFrame(df_temp_biosample)
       df_temp_biosample = df_temp_biosample.transpose()
       df_temp_biosample.columns = ['id', 'biosample_id', 'SRA_id', 'taxonomy_name', 'owner', 'broad_scale_enviromental', 'geo_loc_name', 'lat_and_lon', 'bioproject_id']
 
-      # Resetando as listas para a próxima iteração
+      # Resetando as listas:
       id_bioproject_biosample = []
       accession_biosample = []
       SRA_biosample = []
@@ -261,14 +256,12 @@ def pesquisa_NCBI(termo_da_pesquisa_esearch, num_de_resultados_esearch, termo_li
       lat_and_lon_biosample = []
       bioproject_biosample = []
 
-      # Concatenando os resultados
+      # Juntando os resultados:
       if concat == 0:
           df_concat_biosample = df_temp_biosample
           concat = 10
       else:
           df_concat_biosample = pd.concat([df_concat_biosample, df_temp_biosample])
-
-  # Exibindo o DataFrame final com todos os dados coletados
   
   print(df_concat_biosample)
   print(df_concat_biosample.shape)
@@ -288,7 +281,6 @@ def pesquisa_NCBI(termo_da_pesquisa_esearch, num_de_resultados_esearch, termo_li
   
   print('Iniciando pesquisa na base SRA:')
   
-  # Definição das listas para armazenar os dados
   library_name = []
   biosample_id = []
   library_instrument = []
@@ -298,18 +290,12 @@ def pesquisa_NCBI(termo_da_pesquisa_esearch, num_de_resultados_esearch, termo_li
   library_layout = []
   url_principal = []
   
-  # Criando o DataFrame corretamente
   df_teste = pd.DataFrame(list(url_principal.items()), columns=['SRA_id', 'URLs'])
-
-  # Definir quais IDs de amostras você quer pesquisar
   num_de_ids_sra = len(lista_sra)
   
-
-  # Definir a chave de API do Entrez
   Entrez.email = 'pedro.rodrigues.rocha@usp.br'
   Entrez.api_key = '94372c1e44aa8df940f2e7b790a761a25908'
 
-  # Inicializa a variável para controlar a concatenação dos DataFrames
   concat = 0
   c = 0
 
