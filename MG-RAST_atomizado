@@ -1,0 +1,141 @@
+def pesquisa_mgrast(url, requisitions):
+    x = 0
+    resultados_totais = []
+    while url:
+        try:
+            resposta = requests.get(url, verify=False)
+
+            if resposta.status_code == 200:
+                data = resposta.json()
+                data_list = data.get('data', [])
+                
+                if data_list:
+                    resultados_totais.extend(data_list)  
+                    click.echo(message=f"Adicionadas {len(data_list)} linhas. Total até agora: {len(resultados_totais)}")
+                else:
+                    click.echo("Nenhum dado retornado na página atual.")
+                    break
+                
+                x += 1
+                print(x)
+                
+                # Atualização da URL para as próximas páginas
+                url = data.get('next', None)
+                if requisitions < x:  # Limite de requisições (pode ser alterado conforme necessidade)
+                    break
+                if url:
+                    click.echo(message=f"Avançando para a próxima página: {url}")
+                else:
+                    click.echo(message="Não há mais páginas para processar.")
+                    break
+            else:
+                click.echo(message=f"Erro ao acessar a API: {resposta.status_code}")
+                break
+
+        except requests.exceptions.RequestException as e:
+            print(f"Erro na requisição: {e}")
+            break
+
+        df_mgrast = pd.DataFrame(resultados_totais)
+        
+    return df_mgrast
+        # lista_mgrast = df_mgrast.to_csv("lista_mgrast.csv")
+        
+
+# FAZ A FILTRAGEM PELA QUALIDADE E TIPO DE SEQUÊNCIA
+def filtrar_mgrast(df, sequence_type):
+    """Aplica o filtro do drisee_score e do tipo de sequência (na coluna "sequence_type")."""
+    print("Fazendo a filtragem inicial dos dados:")
+    print("As colunas do df são:")
+    print(df.columns)
+    df = df.dropna(subset=['drisee_score_raw'])
+    df = df[df['drisee_score_raw'].between(0.01, 6.0)]
+    df = df[df['sequence_type'] == sequence_type]
+    print(" Filtragem inicial concluída.")
+    print(df['sequence_type'].value_counts())  # Confirmação
+    return df
+
+
+# OBTEM AS URLS E JUNTA ELAS COM AS OUTRAS INFORMAÇÕES.
+def fetch_sample_urls(df):
+    """Busca URLs associadas aos IDs das amostras."""
+    print("Iniciando a pesquisa das urls das amostras:")
+    dados_brutos = []
+    
+    sample_ids = df['metagenome_id'].tolist()
+    
+    for sample_id in sample_ids:
+        url = f"https://api.mg-rast.org/1/download/{sample_id}"
+        response = requests.get(url, verify=False)
+        
+        if response.status_code == 200:
+            resposta_json = response.json()
+            
+            if 'data' in resposta_json:
+                for item in resposta_json['data']:
+                    if 'url' in item:
+                        dados_brutos.append({
+                            'metagenome_id': sample_id,
+                            'url': item['url']
+                        })  # Adiciona um dicionário por URL
+            
+        else:
+            dados_brutos.append({
+                'metagenome_id': sample_id,
+                'url': f"Erro: {response.status_code}"
+            })  # Adiciona erro como valor
+
+    # Criando DataFrame com as URLs
+    df_dados_brutos = pd.DataFrame(dados_brutos)
+
+    # Junta os dados pelo ID da amostra
+    tabela_com_url = pd.merge(df, df_dados_brutos, on='metagenome_id', how='inner')
+
+    print("Pesquisa das URLs concluída! Informações juntadas em uma tabela só.")
+    return tabela_com_url
+
+
+# FAZ A SEPARAÇÃO DOS TIPOS 
+def segmentar_data(tabela_com_url):
+    """Segmenta os dados em categorias específicas."""
+    print("Separando a tabela em diferentes segmentos de acordo com a origem do metagenoma:")
+    segments = {
+        "wastewater": tabela_com_url[tabela_com_url['env_package_type'].str.contains('wastewater|sludge', case=False, na=False)],
+        "normal": tabela_com_url[~tabela_com_url['env_package_type'].str.contains('wastewater|sludge', case=False, na=False)],
+        "coral": tabela_com_url[tabela_com_url['biome'].str.contains('coral', case=False, na=False)],
+        "ocean": tabela_com_url[tabela_com_url['biome'].str.contains('ocean', case=False, na=False)],
+        "freshwater": tabela_com_url[tabela_com_url['biome'].str.contains('freshwater', case=False, na=False)],
+        "mangrove": tabela_com_url[tabela_com_url['biome'].str.contains('mangrove', case=False, na=False)],
+    }
+    return segments
+    print("Segmentação concluída!")
+
+# FAZ O DOWNLOAD DO CSV
+def save_to_csv(tabela_com_url):
+    """Salva os dados em um arquivo CSV."""
+    print("Salvando para .csv")
+    df_mgrast = pd.DataFrame(tabela_com_url)
+    df_mgrast.to_csv("mgrast_teste_atomizacao.csv", index=False)
+    print("Dados salvos no arquivo 'mgrast_teste_atomizacao.csv'.")
+
+@click.command()
+@click.option("--url", default='https://api.mg-rast.org/search?country=Brazil&limit=100', type=str, help="URL para pesquisa de dados no MG-RAST.")
+@click.option("--requisitions", default=5, type=int, help="Número de vezes que a API será consultada.")
+# @click.option("--biome", default="marine|mangrove|aquatic|freshwater|coral|ocean|estuarine|reef|river|oceanic|sea|lake", type=str, help="Seleciona linhas que contenham palavras específicas no bioma.")
+@click.option("--sequence_type", default="WGS", type=str, help="Seleciona o tipo de sequência desejado.")
+
+def main(url, requisitions, sequence_type):
+    df_mgrast = pesquisa_mgrast('https://api.mg-rast.org/search?country=Brazil&limit=100', 2)
+    df_mgrast_filtrado = filtrar_mgrast(df_mgrast, "WGS")
+    sample_ids = df_mgrast_filtrado['metagenome_id'].tolist()
+    tabela_com_url = fetch_sample_urls(df_mgrast_filtrado)
+    print("Começando a função segment_mgrast:")
+    segments = segmentar_data(tabela_com_url)
+    print("Segmentação concluída")
+    print("Salvando em .csv:")
+    save_to_csv(tabela_com_url)
+    print("Salvado!!!")
+    print("Processamento concluído!")
+
+if __name__ == "__main__":
+    main()
