@@ -1,3 +1,29 @@
+# RESUMO DO CÓDIGO:
+# Este código é importante para a obtenção de dados pela api do mg-rast e para o tratamento destes dados,
+# ou seja, para a filtragem deles. Este é o código atomizado, e contem as seguintes funções:
+
+# pesquisa_mgrast(url, requisitions) = Faz a pesquisa dentro da API, retornando dados brutos.
+# (FUNCIONANDO = SIM)
+ 
+# filtrar_mgrast(df, sequence_type) = Faz a limpeza dos dados brutos, selecionando só o que nós queremos: WGS de boa qualidade.
+# (FUNCIONANDO = SIM)
+
+# fetch_sample_urls(df) = Busca as urls de download das amostras. A url não é uma informação que a api entrega inicialmente. Por isso, temos esta função.
+# (FUNCIONANDO = SIM)
+
+# segmentar_data(tabela_com_url) = Pega os dados analisáveis obtidos pela api e separa em categorias de acordo com a origem do material. Pode ser modificada para exibir o que você quer ver (adicionar isto como um parâmetro de função.)
+# (FUNCIONANDO = SIM)
+
+# save_to_csv(tabela_com_url) = Salva a nova tabela como um .csv
+# (FUNCIONANDO = SIM)
+
+
+import pandas as pd
+import requests
+import click
+import csv
+import urllib3
+
 def pesquisa_mgrast(url, requisitions):
     x = 0
     resultados_totais = []
@@ -50,9 +76,10 @@ def filtrar_mgrast(df, sequence_type):
     print(df.columns)
     df = df.dropna(subset=['drisee_score_raw'])
     df = df[df['drisee_score_raw'].between(0.01, 6.0)]
+    print("Respostas totais do tipo de sequência do df:", df['sequence_type'].value_counts())
     df = df[df['sequence_type'] == sequence_type]
     print(" Filtragem inicial concluída.")
-    print(df['sequence_type'].value_counts())  # Confirmação
+    print("Respostas finais do tipo de sequencia:", df['sequence_type'].value_counts())  # Confirmação
     return df
 
 
@@ -96,7 +123,7 @@ def fetch_sample_urls(df):
 
 
 # FAZ A SEPARAÇÃO DOS TIPOS 
-def segmentar_data(tabela_com_url):
+def segmentar_data(tabela_com_url, mostrar_dfs=True, resumo=True):
     """Segmenta os dados em categorias específicas."""
     print("Separando a tabela em diferentes segmentos de acordo com a origem do metagenoma:")
     segments = {
@@ -107,8 +134,31 @@ def segmentar_data(tabela_com_url):
         "freshwater": tabela_com_url[tabela_com_url['biome'].str.contains('freshwater', case=False, na=False)],
         "mangrove": tabela_com_url[tabela_com_url['biome'].str.contains('mangrove', case=False, na=False)],
     }
-    return segments
     print("Segmentação concluída!")
+    
+    # ABAIXO ÁREA PARA MODIFICAÇÃO DE QUAIS TABELAS VOCÊ QUER VISUALIZAR:
+    
+    if mostrar_dfs:
+        print("\nResumo dos segmentos criados:")
+        for segmento, df in segments.items():
+            print(f"\n--- {segmento.upper()} ---")
+            print(f"Número de linhas: {len(df)}")
+            print("Primeiras linhas:")
+            print(df.head(20))  
+            print("=" * 50)
+            
+    resumo = None
+    if resumo:
+        contagens = {segmento: len(df) for segmento, df in segments.items()}
+        total = sum(contagens.values())
+        contagens['TOTAL'] = total  # Adiciona linha de total
+        
+        resumo = pd.DataFrame.from_dict(contagens, orient='index', columns=['Número de Linhas'])
+        print("\nTabela Resumo:")
+        print(resumo)
+    
+    return segments
+    
 
 # FAZ O DOWNLOAD DO CSV
 def save_to_csv(tabela_com_url):
