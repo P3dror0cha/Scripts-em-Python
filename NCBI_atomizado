@@ -1,20 +1,31 @@
+from lib2to3.pgen2.pgen import DFAState
+import requests
+import time
 from Bio import Entrez
 import pandas as pd
 import xml.etree.ElementTree as ET
 import xmltodict
-import time
 import click
-import json
-import requests
-import re
+from urllib.parse import quote
+from tqdm import tqdm
+from time import sleep
+from typing import Dict, Set
+import os
 
-# Configurações globais
 Entrez.email = 'pedro.rodrigues.rocha@usp.br'
 Entrez.api_key = '94372c1e44aa8df940f2e7b790a761a25908'
 DEFAULT_QUERY = 'metagenome AND aquatic'
 
 def search_bioprojects(term, max_results):
-    """Realiza pesquisa inicial de bioprojetos no NCBI"""
+    """Realiza pesquisa inicial de bioprojetos no NCBI
+    
+    Parâmetros:
+    term: Termo usado para a pesquisa inicial dos bioprojects. É um str.
+    max_results: Número máximo de pesquisas que é retornada pelo código. É um int.
+    
+    Retorna:
+    - results['IdList']: Lista com os ids de bioproject que foram encontrados.
+    """
     print ("Iniciando a função search_bioprojects -(1)")
     print(f"Pesquisando bioprojetos com termo: {term}")
     handle = Entrez.esearch(db='bioproject', term=term, retmax=max_results)
@@ -25,7 +36,14 @@ def search_bioprojects(term, max_results):
     return results['IdList']
 
 def fetch_bioproject_data(id_list):
-    """Obtém dados detalhados de cada bioprojeto"""
+    """Obtém dados detalhados de cada bioprojeto
+    
+    Parâmetros:
+    id_list: Lista de ids dos bioprojects que serão pesquisados via efetch. É uma list.
+    
+    Retorna:
+    - Entrega um dataframe com as informações dos bioprojects.
+    """
     print("Início da função fetch_bioproject_data -(2)")
     print(f"Obtendo dados para {len(id_list)} bioprojetos...")
     
@@ -77,240 +95,198 @@ def fetch_bioproject_data(id_list):
     print("Fim da função fetch_bioproject_data -(2)")
     return df
 
-
 def link_bioproject_to_biosample(bioproject_ids):
-    """Obtém IDs de biosample relacionados aos bioprojetos"""
-    print("Início da função link_bioproject_to_biosample -(3)")
-    print("Buscando biosamples relacionados aos bioprojetos...")
-    ids_str = ",".join(bioproject_ids)
+    """
+    Obtém as relações de BioProject e BioSample. Faz uma pesquisa bidirecional,
+    e adiciona os accessions dos BioSamples ao dataframe parcial.
     
-    print("Os ids de bioproject consultados são:")
-    print(ids_str)
-
-    response = requests.get(
-        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/elink.fcgi",
-        params={
-            "dbfrom": "bioproject",
-            "db": "biosample",
-            "id": ids_str,
-            "retmode": "json"
-        }
-    )
+    Parâmetro:
+    bioprojects_ids: Lista com os ids de bioproject. É uma list.
     
-    data = response.json()
-    biosample_ids = []
+    Retorna:
+    - DataFrame com todas as relações encontradas (df_relations)
+    - Dicionário de relações inversas (biosample_to_projects)
+    - DataFrame parcial com accessions dos BioSamples (df_parcial_relations)
+    """
+    session = requests.Session()
+    parcial_relations = []
+    relations = []
+    biosample_to_projects = {}
     
-    try:
-        for linkset in data["linksets"]:
-            for linksetdb in linkset.get("linksetdbs", []):
-                if linksetdb["dbto"] == "biosample":
-                    biosample_ids.extend(linksetdb["links"])
-    except KeyError:
-        print("Erro ao processar links entre bioprojetos e biosamples")
-    
-    print(f"Os ids de biosample encontrados foram: {biosample_ids}")
-    print(f"Encontrados {len(biosample_ids)} biosamples relacionados")
-    print("Fim da função link_bioproject_to_biosample -(3)")
-    return biosample_ids
-
-def fetch_biosample_data(biosample_ids):
-    """Obtém dados detalhados de cada biosample"""
-    print("Início da função fetch_biosample_data -(4)")
-    print(f"Obtendo dados para {len(biosample_ids)} biosamples...")
-    
-    data = {
-        'id': [], 'biosample_id': [], 'SRA_id': [], 'taxonomy_name': [],
-        'owner': [], 'broad_scale_enviromental': [], 'geo_loc_name': [],
-        'lat_and_lon': [], 'bioproject_id': []
-    }
-    
-    for i, id_number in enumerate(biosample_ids, 1):
-        # Possível problema com o id number. Necessáio ver a lista!!!
-        # TEM QUE PESQUISAR COM A COLUNA "id". A coluna "biosample_id" leva a resultados errados!!!
+    for bioproject_id in tqdm(bioproject_ids, desc="Processando BioProjects"):
         try:
-            handle = Entrez.efetch(db='biosample', id=id_number, rettype='xml', retmode='xml')
-            print(f"Processando biosample {i}/{len(biosample_ids)} - ID: {id_number}")
-            time.sleep(0.01)
+            time.sleep(0.34)  
             
-            xml_data = handle.read().decode('utf-8')
-            handle.close()
+            # Busca direta (BioProject → BioSample)
+            response = session.get(
+                "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/elink.fcgi",
+                params={
+                    "dbfrom": "bioproject",
+                    "db": "biosample",
+                    "id": bioproject_id,
+                    "retmode": "json",
+                    "email": "pedro.rodrigues.rocha@usp.br"
+                },
+                timeout=30
+            )
+            response.raise_for_status()
+            data = response.json()
             
-            data_dict = xmltodict.parse(xml_data)
-            root = ET.fromstring(xml_data)
-            biosample = root.find(".//BioSample")
-            
-            data['id'].append(data_dict['BioSampleSet']['BioSample']['@id'])
-            data['biosample_id'].append(data_dict['BioSampleSet']['BioSample']['@accession'])
-            
-            sra_element = biosample.find(".//Id[@db='SRA']") if biosample else None
-            data['SRA_id'].append(sra_element.text if sra_element else "NA")
-            
-            # Taxonomia:
-            try:
-                data['taxonomy_name'].append(data_dict['BioSampleSet']['BioSample']['Description']['Organism']['@taxonomy_name'])
-            except:
-                data['taxonomy_name'].append('NA')
-            
-            # Autor:
-            try:
-                owner = data_dict['BioSampleSet']['BioSample']['Owner']['Name']
-                data['owner'].append(owner['#text'] if '#text' in owner else owner)
-            except:
-                data['owner'].append('NA')
-            
-            # Atributos:
-            attributes = data_dict['BioSampleSet']['BioSample'].get('Attributes', {}).get('Attribute', [])
-            if not isinstance(attributes, list):
-                attributes = [attributes]
-                
-            attr_data = {
-                'isolation_source': 'NA',
-                'geo_loc_name': 'NA',
-                'lat_lon': 'NA'
-            }
-            
-            for attr in attributes:
-                name = attr['@attribute_name']
-                if name in attr_data:
-                    attr_data[name] = attr['#text']
-            
-            data['broad_scale_enviromental'].append(attr_data['isolation_source'])
-            data['geo_loc_name'].append(attr_data['geo_loc_name'])
-            data['lat_and_lon'].append(attr_data['lat_lon'])
-            
-            # Bioproject link:
-            try:
-                data['bioproject_id'].append(data_dict['BioSampleSet']['BioSample']['Links']['Link']['@label'])
-            except:
-                data['bioproject_id'].append('NA')
-                
+            for linkset in data["linksets"]:
+                current_bioproject = linkset["ids"][0]
+                for linksetdb in linkset.get("linksetdbs", []):
+                    if linksetdb["dbto"] == "biosample":
+                        for biosample_id in linksetdb["links"]:
+                            biosample_accession = biosample_id.split('.')[0]
+                            
+                            relations.append({
+                                "BioProject_ID": current_bioproject,
+                                "BioSample_ID": biosample_id,
+                                "BioSample_Accession": biosample_accession
+                            })
+                            
+                            parcial_relations.append({ 
+                                "BioProject_ID": current_bioproject,
+                                "BioSample_ID": biosample_id,
+                                "BioSample_Accession": biosample_accession
+                            })
+                            
+                            # Busca inversa (BioSample → BioProjects)
+                            if biosample_id not in biosample_to_projects:
+                                biosample_to_projects[biosample_id] = set()
+                            biosample_to_projects[biosample_id].add(current_bioproject)
+                            
+                            time.sleep(0.34)
+                            try:
+                                inverse_response = session.get(
+                                    "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/elink.fcgi",
+                                    params={
+                                        "dbfrom": "biosample",
+                                        "db": "bioproject",
+                                        "id": biosample_id,
+                                        "retmode": "json",
+                                        "email": "pedro.rodrigues.rocha@usp.br"
+                                    },
+                                    timeout=30
+                                )
+                                inverse_response.raise_for_status()
+                                inverse_data = inverse_response.json()
+                                
+                                for inv_linkset in inverse_data["linksets"]:
+                                    for inv_linksetdb in inv_linkset.get("linksetdbs", []):
+                                        if inv_linksetdb["dbto"] == "bioproject":
+                                            for additional_project in inv_linksetdb["links"]:
+                                                if additional_project != current_bioproject:
+                                                    relations.append({
+                                                        "BioProject_ID": additional_project,
+                                                        "BioSample_ID": biosample_id,
+                                                        "BioSample_Accession": biosample_accession
+                                                    })
+                                                    biosample_to_projects[biosample_id].add(additional_project)
+                            
+                            except Exception as inv_e:
+                                print(f"Erro na verificação inversa para BioSample {biosample_id}: {str(inv_e)}")
+                                continue
+        
         except Exception as e:
-            print(f"Erro ao processar biosample {id_number}: {e}")
-            continue
-            # data
-    df_biosample = pd.DataFrame(data).fillna("Vazio")
-
-    print("\nResumo do DataFrame:")
-    print(f"Total de registros: {len(df_biosample)}")
-    print("\nPrimeiras linhas:")
-    print(df_biosample.head(25))
-    print("\nValores únicos por coluna:")
-    for col in df_biosample.columns:
-        print(f"{col}: {df_biosample[col].nunique()} valores únicos")
-    
-
-    # Fazendo o download do dataframe de biosample:
-    print("Fazendo o download do dataframe de biosample:")
-    df_biosample.to_csv("df_biosample.csv", index=False)
-    print("Dataframe de Biosample baixado!")
-    print("Finalizando a função fetch_biosample_data - (4)")
-    return df_biosample
-
-def fetch_sra_data(sra_ids):
-    """Obtém dados de sequenciamento (SRA) para cada biosample"""
-    print("Iniciando a função fetch_sra_data -(5)")
-    sra_ids = df_biosample
-    print(f"Obtendo dados SRA para um total de {len(sra_ids)} amostras...")
-    print("Amostras da lista:")
-    print(sra_ids)
-    
-    data = {
-        'library_name': [], 'biosample_id': [], 'library_instrument': [],
-        'library_strategy': [], 'library_source': [], 'library_selection': [],
-        'library_layout': [], 'SRA_id': [], 'URLs': []
-    }
-    
-    for i, sra_id in enumerate(sra_ids, 1):
-        try:
-            print(f"Processando SRA {i}/{len(sra_ids)} - ID: {sra_id}")
-            
-            # Pesquisa para obter o ID correto
-            handle = Entrez.esearch(db='sra', term=sra_id, retmode='xml')
-            search_result = Entrez.read(handle)
-            handle.close()
-            
-            if not search_result['IdList']:
-                print(f"Nenhum resultado encontrado para {sra_id}")
-                continue
-                
-            # Obtém os dados completos
-            handle = Entrez.efetch(db='sra', id=search_result['IdList'][0], rettype='xml', retmode='xml')
-            xml_data = handle.read().decode('utf-8')
-            handle.close()
-            
-            # Extrai URLs
-            root = ET.fromstring(xml_data)
-            urls = [f.get('url') for f in root.findall(".//SRAFile") if f.get('url')]
-            data['URLs'].append(urls if urls else ["NA"])
-            
-            # Processa os metadados
-            data_dict = xmltodict.parse(xml_data)
-            exp_pkg = data_dict['EXPERIMENT_PACKAGE_SET']['EXPERIMENT_PACKAGE']
-            
-            # Biosample ID
-            try:
-                data['biosample_id'].append(exp_pkg['SAMPLE']['IDENTIFIERS']['EXTERNAL_ID']['#text'])
-            except:
-                data['biosample_id'].append('NA')
-            
-            # Dados da biblioteca
-            lib_desc = exp_pkg['EXPERIMENT']['DESIGN']['LIBRARY_DESCRIPTOR']
-            
-            for field in ['library_name', 'library_strategy', 'library_source', 
-                         'library_selection', 'library_layout']:
-                data[field].append(lib_desc.get(field.upper(), 'NA'))
-            
-            # Instrumento
-            try:
-                data['library_instrument'].append(exp_pkg['RUN_SET']['RUN']['@instrument'])
-            except:
-                data['library_instrument'].append('NA')
-            
-            data['SRA_id'].append(sra_id)
-            time.sleep(0.05)
-            
-        except Exception as e:
-            print(f"Erro ao processar SRA {sra_id}: {e}")
+            print(f"Erro no BioProject {bioproject_id}: {str(e)}")
             continue
     
-    # Processa URLs
-    df = pd.DataFrame(data)
-    url_df = pd.DataFrame(df['URLs'].tolist(), index=df.index)
-    url_df.columns = [f'URL_{i+1}' for i in range(url_df.shape[1])]
-    df = pd.concat([df.drop('URLs', axis=1), url_df], axis=1)
-    print("O resultado do dataframe do SRA ficou desta forma:")
-    print(df.head(25))
-    print("O shape da função sra é:")
-    print(df.shape)
-    print("Fim da função fetch_sra_data -(5)")
-    return df
+    df_relations = pd.DataFrame(relations).drop_duplicates()
+    df_parcial_relations = pd.DataFrame(parcial_relations).drop_duplicates()
 
-def filter_data(df, instrument_terms, strategy_terms, location_terms):
-    """Filtra os dados conforme critérios especificados"""
-    print("Iniciando a função filter_data -(6)")
-    print("Filtrando dados...")
+    lista_de_biosamples = df_parcial_relations['BioSample_ID'].tolist()
     
-    # Filtra por instrumento
-    instrument_pattern = '|'.join(instrument_terms)
-    filtered = df[df['library_instrument'].str.contains(instrument_pattern, case=False, na=False)]
-    
-    # Filtra por estratégia
-    strategy_pattern = '|'.join(strategy_terms)
-    filtered = filtered[filtered['library_strategy'].str.contains(strategy_pattern, case=False, na=False)]
-    
-    # Filtra por localização
-    location_pattern = '|'.join(location_terms)
-    filtered = filtered[filtered['geo_loc_name'].str.contains(location_pattern, case=False, na=False)]
-    
-    print(f"Dados filtrados: {filtered.shape[0]} amostras restantes")
-    print("A forma das primeiras linhas do df filtrado é:")
-    print(filtered.head(25))
-    print("Fim da função filter_data -(6)")
-    return filtered
+    return df_relations, biosample_to_projects, df_parcial_relations, lista_de_biosamples
 
-def save_and_summarize(df, filename):
-    """Salva os dados e exibe um resumo"""
-    print("Início da função save_and_summarize -(7)")
+def identifiers(lista_de_biosamples, email="pedro.rodrigues.rocha@usp.br"):
+    """
+    Busca os identificadores (ex: SAMEAXXXXX) de BioSample no NCBI para cada BioSample_ID. Esses identificadores são importantes para a junção dos datafames.
+    
+    Parâmetros:
+    lista_de_biosamples: Lista de IDs de BioSample. É uma list
+    email: E-mail para usar na API do NCBI. É um str.
+    
+    Retorna:
+    - pandas.DataFrame: DataFrame com colunas 'BioSample_ID' e 'Accession'
+    """
+    Entrez.email = email
+    results = []
+    
+    for biosample_id in lista_de_biosamples:
+        try:
+            handle = Entrez.efetch(db="biosample", id=biosample_id)
+            biosample_data = handle.read().decode('utf-8')
+            handle.close()
+            
+            root = ET.fromstring(biosample_data)
+            
+            biosample = root.find('BioSample')
+            accession = biosample.get('accession') if biosample is not None else None
+            
+            results.append({'BioSample_ID': biosample_id, 'Accession': accession})
+                
+        except Exception as e:
+            print(f"Erro ao processar {biosample_id}: {str(e)}")
+            results.append({'BioSample_ID': biosample_id, 'Accession': None})
+    
+    return pd.DataFrame(results)
+
+
+def unindo_df_bioproject_biosample(df_bioproject, df_parcial_relations, df_parcial_relations_atualizada, df_metadados):
+    """
+    Faz a fusão dos dataframes de bioproject, biosample e sra. Ao final entrega uma tabela com todas as informações obtidas pelo código.
+    
+    Parâmetros:
+    df_bioproject: Lista com os dados de bioproject.
+    df_parcial_relations: Contem as relações entre os ids de bioproject e biosample.
+    df_metadados: Contem os dados de biosample que foram pesquisados.
+    
+    Retorna:
+    - df_metadados_completos: Uma tabela que é a fusão de todas as tabelas.
+    """
+    
+    parcial_relations = pd.merge(df_parcial_relations, df_parcial_relations_atualizada, on='BioSample_ID', how='left')
+    # parcial_relations.to_csv("0.5_parcial_relations.csv")
+
+    # Unindo bioproject com biosample
+    df_metadados = df_metadados.rename(columns={"biosample_id": "Accession"})
+    df_metadados_completos = pd.merge(parcial_relations, df_metadados, on='Accession', how='left')
+    
+    df_bioproject = df_bioproject.rename(columns={"id": "BioProject_ID"})
+    df_metadados_completos = pd.merge(df_bioproject, df_metadados_completos, left_on='BioProject_ID', right_on='BioProject_ID', how='right')
+  
+    # Unindo a tabela de bioproject/biosample com sra
+    df_sra = df_sra.rename(columns={"BioProject_Origin": "BioProject_ID"})
+    df_metadados_completos = pd.merge(df_metadados_completos, df_sra, left_on='BioProject_ID', right_on='BioProject_ID', how='right')
+
+    return df_metadados_completos
+
+#def filter_data():
+    #"""Filtra os dados conforme critérios especificados"""
+    #print("Iniciando a função filter_data -(6)")
+    #print("Filtrando dados...")
+    
+    # Filtros:
+
+    
+    #print(f"Dados filtrados: {filtered.shape[0]} amostras restantes")
+    #print("A forma das primeiras linhas do df filtrado é:")
+    #print(filtered.head(25))
+    #print("Fim da função filter_data -(6)")
+    #return filtered
+
+def save(df, filename):
+    """Salva os dados obtidos pelas funções anteriores.
+    
+    Parâmetros:
+    df: É a tabela final com todos os resultados pesquisados.
+    filename: Nome do file que será baixado.
+    
+    Resultados:
+    Download do dataframe como um arquivo .csv
+    """
+    print("Início da função save -(7)")
     print(f"Salvando dados em {filename}")
     df.to_csv(filename, index=False)
     
@@ -326,11 +302,189 @@ def save_and_summarize(df, filename):
     
     print("\nContagem por projeto:")
     print(df['bioproject_id'].value_counts())
-    print("Fim da função save_and_summarize -(7)")
+    print("Fim da função save -(7)")
+    
+Entrez.email = "pedro.rodrigues.rocha@usp.br"
 
+def get_biosample_metadata(biosample_dict: Dict[str, Set[str]], batch_size: int = 100, delay: float = 1) -> pd.DataFrame:
+    """
+    Obtém metadados para BioSamples a partir de um dicionário de IDs
+    
+    Parâmetros:
+    biosample_dict: Dicionário onde chaves são BioSample IDs e valores são conjuntos de IDs relacionados
+    batch_size: Número de IDs para buscar por requisição
+    delay: Atraso entre requisições em segundos.
+    
+    Retorna:
+    DataFrame: Metadados consolidados dos BioSamples principais
+    """
+    biosample_ids = list(biosample_dict.keys())
+    all_data = []
+    
+    # Processar em lotes
+    for i in range(0, len(biosample_ids), batch_size):
+        batch = biosample_ids[i:i + batch_size]
+        print(f"Processando lotes {i+1}-{i+len(batch)} de {len(biosample_ids)}...")
+        
+        try:
+            with Entrez.efetch(db="biosample", id=",".join(batch), retmode="xml") as handle:
+                xml_data = handle.read()
+            root = ET.fromstring(xml_data)
+            
+            for sample in root.findall('.//BioSample'):
+                try:
+                    attrs = sample.attrib
+                    characteristics = {}
+                    
+                    for attr in sample.findall('.//Attribute'):
+                        harmonized_name = attr.attrib.get('harmonized_name', '')
+                        attribute_name = attr.attrib.get('attribute_name', harmonized_name)
+                        characteristics[attribute_name] = attr.text
+                    
+                    related_ids = biosample_dict.get(attrs.get('accession'), set())
+                    sample_data = {
+                        'biosample_id': attrs.get('accession'),
+                        'related_ids': ", ".join(related_ids) if related_ids else None,
+                        'publication_date': attrs.get('publication_date'),
+                        'last_update': attrs.get('last_update'),
+                        'submission_date': attrs.get('submission_date'),
+                        **characteristics
+                    }
+                    all_data.append(sample_data)
+                    
+                except Exception as e:
+                    print(f"Erro ao processar BioSample {attrs.get('accession', 'desconhecido')}: {str(e)}")
+            
+            sleep(delay)
+            
+        except Exception as e:
+            print(f"Erro no lote {i//batch_size + 1}: {str(e)}")
+    
+            for biosample_id in batch:
+                try:
+                    with Entrez.efetch(db="biosample", id=biosample_id, retmode="xml") as handle:
+                        xml_data = handle.read()
+                    root = ET.fromstring(xml_data)
+                    sample = root.find('.//BioSample')
+                    attrs = sample.attrib
+                    characteristics = {}
+                    
+                    for attr in sample.findall('.//Attribute'):
+                        harmonized_name = attr.attrib.get('harmonized_name', '')
+                        attribute_name = attr.attrib.get('attribute_name', harmonized_name)
+                        characteristics[attribute_name] = attr.text
+                    
+                    related_ids = biosample_dict.get(biosample_id, set())
+                    all_data.append({
+                        'biosample_id': biosample_id,
+                        'related_ids': ", ".join(related_ids) if related_ids else None,
+                        'publication_date': attrs.get('publication_date'),
+                        'last_update': attrs.get('last_update'),
+                        'submission_date': attrs.get('submission_date'),
+                        **characteristics
+                    })
+                    sleep(delay/2)
+                    
+                except Exception as e:
+                    print(f"Falha ao processar BioSample {biosample_id}: {str(e)}")
+    
+    if all_data:
+        df = pd.DataFrame(all_data)
+        cols = ['biosample_id', 'related_ids', 'publication_date', 'last_update', 'submission_date'] + \
+               [c for c in df.columns if c not in {'biosample_id', 'related_ids', 'publication_date', 'last_update', 'submission_date'}]
+        return df[cols]
+    
+    return pd.DataFrame()
+
+#########################################################################################################
+
+def get_sra_metadata_for_multiple_bioprojects(bioproject_ids, email="pedro.rodrigues.rocha@usp.br"):
+    """
+    Obtém metadados SRA para uma lista de bioproject IDs e retorna:
+    - DataFrame com metadados SRA (incluindo origem)
+    - Lista de bioprojects sem registros SRA
+    
+    Parâmetros:
+    bioproject_ids: Lista de IDs de bioprojects. É uma list.
+    email: Email válido para uso na API do NCBI. É um str.
+    
+    Retorna:
+    - Uma tupla de resultados: (pd.DataFrame com metadados, list de bioprojects sem SRA)
+    """
+    Entrez.email = email
+    all_metadata = []
+    bioprojects_without_sra = []
+    delay = 1  # segundos entre requisições
+    
+    for i, bioproject_id in enumerate(bioproject_ids, 1):
+        temp_file = None
+        try:
+            print(f"\nProcessando ({i}/{len(bioproject_ids)}): {bioproject_id}")
+            
+            # Buscar IDs SRA
+            with Entrez.esearch(db="sra", term=f"{bioproject_id}[BioProject]", retmax=1000) as handle:
+                record = Entrez.read(handle)
+            
+            sra_ids = record.get("IdList", [])
+            
+            if not sra_ids:
+                print(f"  Nenhum SRA encontrado para {bioproject_id}")
+                bioprojects_without_sra.append(bioproject_id)
+                # Cria um DataFrame mínimo com apenas a coluna de origem
+                empty_df = pd.DataFrame({'BioProject_Origin': [bioproject_id]})
+                all_metadata.append(empty_df)
+                continue
+            
+            print(f"  Encontrados {len(sra_ids)} registros SRA")
+            
+            # Obter metadados
+            with Entrez.efetch(db="sra", id=",".join(sra_ids), rettype="runinfo", retmode="text") as handle:
+                sra_metadata = handle.read().decode('utf-8')
+            
+            # Processar metadados
+            temp_file = f"temp_{bioproject_id}.csv"
+            with open(temp_file, "w", encoding='utf-8') as f:
+                f.write(sra_metadata)
+            
+            df = pd.read_csv(temp_file)
+            
+            # Adicionar coluna de origem
+            df.insert(0, 'BioProject_Origin', bioproject_id)
+            
+            all_metadata.append(df)
+            
+            time.sleep(delay)
+            
+        except Exception as e:
+            print(f"  Erro no bioproject {bioproject_id}: {e}")
+            # Registra como bioproject sem SRA e mantém o erro
+            bioprojects_without_sra.append(bioproject_id)
+            error_df = pd.DataFrame({
+                'BioProject_Origin': [bioproject_id],
+                'Error': [str(e)]
+            })
+            all_metadata.append(error_df)
+            
+        finally:
+            # Garante que o arquivo temporário seja removido, mesmo se ocorrer erro
+            if temp_file and os.path.exists(temp_file):
+                os.remove(temp_file)
+    
+    # Consolidar resultados
+    final_df = pd.concat(all_metadata, ignore_index=True) if all_metadata else pd.DataFrame()
+    
+    # Reorganizar colunas (se o DataFrame não estiver vazio)
+    if not final_df.empty:
+        cols = ['BioProject_Origin'] + [col for col in final_df.columns if col != 'BioProject_Origin']
+        final_df = final_df[cols]
+    final_df.to_csv("sra_metadata.csv")
+    bioproject_sem_sra = pd.DataFrame(bioprojects_without_sra, columns=['BioProject_ID'])
+    bioproject_sem_sra.to_csv("bioproject_sem_sra.csv")
+    return final_df, bioprojects_without_sra
+   
 @click.command()
 @click.option('--termo_da_pesquisa', default=DEFAULT_QUERY, help="Termo de pesquisa no NCBI.")
-@click.option('--num_resultados', default=30, type=int, help="Número máximo de resultados.")
+@click.option('--num_resultados', default=100, type=int, help="Número máximo de resultados.")
 @click.option('--termo_estrategia', default="wgs", help="Tipo de estratégia de sequenciamento.")
 @click.option('--termo_instrumento', default="metagenomic,genomic", help="Tipos de instrumentos aceitos.")
 @click.option('--termo_localizacao', default="brazil", help="Localização geográfica das amostras.")
@@ -343,32 +497,35 @@ def main(termo_da_pesquisa, num_resultados, termo_estrategia, termo_instrumento,
     
     # 1. Busca bioprojetos
     bioproject_ids = search_bioprojects(termo_da_pesquisa, num_resultados)
+    print(bioproject_ids)
     
     # 2. Obtém dados dos bioprojetos
-    bioproject_df = fetch_bioproject_data(bioproject_ids)
+    df_bioproject = fetch_bioproject_data(bioproject_ids)
+    df_bioproject.to_csv("1_df_bioproject.csv")
     
     # 3. Encontra biosamples relacionados
-    biosample_ids = link_bioproject_to_biosample(bioproject_ids)
+    df_relations, biosample_ids, df_parcial_relations, lista_de_biosamples = link_bioproject_to_biosample(bioproject_ids)
+
+    # 3.5. Identificadores
+    df_parcial_relations_atualizada = identifiers(lista_de_biosamples, email="pedro.rodrigues.rocha@usp.br")
     
-    # 4. Obtém dados dos biosamples
-    biosample_df = fetch_biosample_data(biosample_ids)
+    # 4. Faz a pesquisa dos metadados dos biosamples
+    df_metadados = get_biosample_metadata(biosample_ids, batch_size=10)
+    df_metadados.to_csv("1_df_metadados.csv")
+    # 5. Obtenção da metadata dos sra
+    df_sra, bioprojects_sem_sra = get_sra_metadata_for_multiple_bioprojects(bioproject_ids, email="pedro.rodrigues.rocha@usp.br")
+    print(df_sra)
     
     # 5. Combina dados de bioprojeto e biosample
-    merged_df = pd.merge(biosample_df, bioproject_df, on='bioproject_id', how='inner')
+    df_metadados_completos = unindo_df_bioproject_biosample(df_bioproject, df_parcial_relations, df_parcial_relations_atualizada, df_metadados)
     
-    # 6. Obtém dados SRA
-    sra_ids = merged_df['SRA_id'].tolist()
-    sra_ids = [re.sub(r"^(SRS|DRS|DRR|SRR)", "", x) for x in sra_ids if x != 'NA']
-    sra_df = fetch_sra_data(sra_ids)
+    # 6. Filtra os dados
+    #filtered_df = filter_data(final_df, instrumentos, [termo_estrategia], localizacoes)
     
-    # 7. Combina todos os dados
-    final_df = pd.merge(sra_df, merged_df, on='biosample_id', how='inner')
-    
-    # 8. Filtra os dados
-    filtered_df = filter_data(final_df, instrumentos, [termo_estrategia], localizacoes)
-    
-    # 9. Salva e exibe resumo
-    save_and_summarize(filtered_df, 'lista_ncbi_filtrada.csv')
+    # 7. Salva e exibe resumo
+    #save(filtered_df, 'lista_ncbi_filtrada.csv')
+
+    df_metadados_completos.to_csv("finalmente.csv")
 
 if __name__ == "__main__":
     main()
